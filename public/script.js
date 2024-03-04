@@ -1,38 +1,45 @@
-// 初始化 socket 连接（相对路径）
+// 初始化 socket 连接
 const socket = io('/')
 const videoGrid = document.getElementById('video-grid')
 // 缓存所有连接到同一房间的其他用户
 const peers = {}
-// 与 peerjs 服务器连接
+// 连接 peerjs 服务器
 const myPeer = new Peer(undefined, {
   host: '/',
   port: '3001'
 })
 
-// 视频元素：来自用户自己的设备的视频流
+// 视频元素：来自当前用户设备的视频流
 const myVideo = document.createElement('video')
 myVideo.style.border = '3px solid red'
 myVideo.muted = true
 
-// 获取用户视频流
+// 当 peer 连接打开时，通过socket向服务器发送一个'join-room'事件
+myPeer.on('open', id => {
+  socket.emit('join-room', ROOM_ID, id)
+})
+
+// 获取当前用户视频流
 navigator.mediaDevices.getUserMedia({
   video: true,
   audio: true
-}).then(stream => {
-  addVideoStream(myVideo, stream)
-  // 当其他用户加入房间时，
-  // 连接到此用户并发送自己的视频流给他
+}).then(currentStream => {
+  // 添加当前用户的视频流数据及 video 元素
+  addVideoStream(myVideo, currentStream)
+  
+  // 监听其他用户的连接事件
   socket.on('user-connected', (userId) => {
-    connectToNewUser(userId, stream)
+    // 发起 peer 连接
+    connectToNewUser(userId, currentStream)
   })
 
-  // 监听'call'事件，当收到其他用户的音视频流时，我们会为其创建一个新的video元素并播放
+  // 监听'call'事件，
   myPeer.on('call', call => {
-    // 将其他用户的视频流返回给当前用户
-    call.answer(stream)
+    // 当收到其他用户的音视频流时，将当前用户的视频流返回给其他用户
+    call.answer(currentStream)
     const video = document.createElement('video')
-    call.on('stream', userVideoStream => {
-      addVideoStream(video, userVideoStream)
+    call.on('stream', otherVideoStream => {
+      addVideoStream(video, otherVideoStream)
     })
   })
 })
@@ -43,10 +50,6 @@ socket.on('user-disconnected', userId => {
     peers[userId].close()
 })
 
-// 当 peer 连接打开时，我们通过socket向服务器发送一个'join-room'事件，告诉服务器我们加入了哪个房间
-myPeer.on('open', id => {
-  socket.emit('join-room', ROOM_ID, id)
-})
 
 // 添加（其他用户）视频元素
 function addVideoStream(video, stream) {
@@ -59,13 +62,16 @@ function addVideoStream(video, stream) {
 
 // 连接到（其他）用户
 function connectToNewUser(userId, stream) {
+  // 向该用户建立连接
   const call = myPeer.call(userId, stream)
   const video = document.createElement('video')
   call.on('stream', userVideoStream => {
     addVideoStream(video, userVideoStream)
   }) 
+  // close 事件触发后，移除 video 元素
   call.on('close', () => {
     video.remove()
   })
+  // 缓存新用户连接
   peers[userId] = call
 }
